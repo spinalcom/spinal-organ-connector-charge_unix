@@ -1,0 +1,23 @@
+SPINAL_USER_ID=168
+SPINAL_PASSWORD="REPLACE_WITH_PASSWORD"
+SPINALHUB_IP="REPLACE_WITH_IP OR URL"
+SPINALHUB_PORT="REPLACE_WITH_PORT or leave empty if url"
+SPINALHUB_PROTOCOL="http" or "https"
+
+DIGITALTWIN_PATH="/__users__/admin/Digital twin" # Path to the Digital Twin file in SpinalDrive
+SPINAL_ORGAN_NAME="Connector Astrid"    # You can keep it as is
+SPINAL_CONFIG_PATH="/etc/Organs/Astrid" # You can keep it as is
+
+
+NETWORK_NAME="Network Astrid" # You can keep it as is
+VIRTUAL_NETWORK_NAME="Virtual Network Astrid" # You can keep it as is
+
+API_BASE_URL=https://ecostruxure-building-platform-api.se.app # keep it as is
+
+TENANT_ID=REPLACE_WITH_TENANT_ID
+CLIENT_ID=REPLACE_WITH_CLIENT_ID
+CLIENT_SECRET=REPLACE_WITH_CLIENT_SECRET
+SCOPE=REPLACE_WITH_SCOPE
+GRANT_TYPE=client_credentials # keep it as is
+
+PULL_INTERVAL=300000 # time in milliseconds between each data pull (default: 5 minutes)
