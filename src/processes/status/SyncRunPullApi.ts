@@ -49,12 +49,18 @@ import {
   InputDataEndpointType,
 } from '../../model/InputData/InputDataModel/InputDataModel';
 
-import { IDevice } from '../../interfaces/api/IDevice';
-import { IBuilding } from '../../interfaces/api/IBuilding';
-import { IMeasurementValue } from '../../interfaces/api/IMeasurementValue';
+
+import { IZone } from '../../interfaces/api/IZone';
+import { IEquipment } from '../../interfaces/api/IEquipment';
+import groupManagerService from 'spinal-env-viewer-plugin-group-manager-service';
+
+
+
 
 
 import { SpinalServiceTimeseries } from 'spinal-model-timeseries';
+import { IChargingStation } from '../../interfaces/api/IChargingStation';
+import { ICSConnector } from '../../interfaces/api/ICSConnector';
 
 /**
  * Main purpose of this class is to pull data from client.
@@ -67,13 +73,50 @@ export class SyncRunPullApi {
   config: OrganConfigModel;
   interval: number;
   running: boolean;
+
   private apiClient: ClientApi;
+
+  // Services spinal
   nwService: NetworkService;
-  nwContext: SpinalNode<any>;
-  nwVirtual: SpinalNode<any>;
-  clientBuilding : IBuilding;
-  endpointMap: Map<string, SpinalNode<any>> = new Map();
   timeseriesService: SpinalServiceTimeseries;
+
+  // Contexts spinal
+  nwContext: SpinalContext<any>;
+  typologyContext: SpinalContext<any>;
+  zoneContext: SpinalContext<any>;
+  transactionContext: SpinalContext<any>;
+
+
+  // Level 1 Children Nodes
+  nwVirtual: SpinalNode<any>;
+  typologyCategory : SpinalNode<any>;
+  zoneCategory : SpinalNode<any>;
+  transactionProcess : SpinalNode<any>;
+
+
+
+  // Level 2 Children Nodes
+  charginStationGroup : SpinalNode<any> ;
+  energyCounterGroup : SpinalNode<any> ;
+
+
+  endpointMap: Map<string, SpinalNode<any>> = new Map();
+
+  statusEnumerationMap: Map<string, number> = new Map([
+    ['Unknown'      , 0],
+    ['Available'    , 1],
+    ['Preparing'    , 2],
+    ['Charging'     , 3],
+    ['SuspendedEV'  , 4],
+    ['SuspendedEVSE', 5],
+    ['Finishing'    , 6],
+    ['Unavailable'  , 7],
+    ['Faulted'      , 8],
+    ['Reserved'     , 9],
+    ['Offline'      , 10],
+
+
+  ]);
 
 
   constructor(graph: SpinalGraph<any>, config: OrganConfigModel) {
@@ -83,18 +126,6 @@ export class SyncRunPullApi {
     this.nwService = new NetworkService(true);
     this.apiClient = ClientApi.getInstance();
     this.timeseriesService = new SpinalServiceTimeseries();
-  }
-
-  async getSpatialContext(): Promise<SpinalNode<any>> {
-    const contexts = await this.graph.getChildren();
-    for (const context of contexts) {
-      if (context.info.name.get() === 'spatial') {
-        // @ts-ignore
-        SpinalGraphService._addNode(context);
-        return context;
-      }
-    }
-    throw new Error('Spatial Context Not found');
   }
 
   private waitFct(nb: number): Promise<void> {
@@ -108,28 +139,226 @@ export class SyncRunPullApi {
     });
   }
 
-  async getNetworkContext(): Promise<SpinalNode<any>> {
+  async getContextByName(name: string): Promise<SpinalContext<any>> {
     const contexts = await this.graph.getChildren();
     for (const context of contexts) {
-      if (context.info.name.get() === process.env.NETWORK_NAME) {
+      if (context.info.name.get() === name) {
         // @ts-ignore
         SpinalGraphService._addNode(context);
         return context;
       }
     }
-    throw new Error('Network Context Not found');
+    throw new Error(`Context with name ${name} Not found`);
   }
 
-  async getVirtualNetwork(): Promise<SpinalNode<any>> {
-    const virtual = await this.nwContext.findOneInContext(this.nwContext, (node) => {
-      return node.getName().get() === process.env.VIRTUAL_NETWORK_NAME;
-    });
-    if (!virtual) throw new Error('Virtual Network Context Not found');
-    SpinalGraphService._addNode(virtual);
-    return virtual;
+  async initRequiredNodes() : Promise<void> {
+    this.nwContext = await this.getContextByName(process.env.NETWORK_NAME);
+    this.typologyContext = await this.getContextByName(process.env.TYPOLOGY_CONTEXT_NAME);
+    this.zoneContext = await this.getContextByName(process.env.ZONE_CONTEXT_NAME);
+    this.transactionContext = await this.getContextByName(process.env.WORKFLOW_NAME);
+
+
+    this.nwVirtual = (await this.nwContext.getChildrenInContext()).find((node) => node.getName().get() === process.env.VIRTUAL_NETWORK_NAME);
+    if (!this.nwVirtual) throw new Error('Virtual Network Node Not found');
+    
+    this.typologyCategory = (await this.typologyContext.getChildrenInContext()).find((node) => node.getName().get() === process.env.TYPOLOGY_CATEGORY_NAME);
+    if (!this.typologyCategory) throw new Error('Typology Category Node Not found');
+
+    this.zoneCategory = (await this.zoneContext.getChildrenInContext()).find((node) => node.getName().get() === process.env.ZONE_CATEGORY_NAME);
+    if (!this.zoneCategory) throw new Error('Zone Category Node Not found');
+
+    this.transactionProcess = (await this.transactionContext.getChildrenInContext()).find((node) => node.getName().get() === process.env.PROCESS_NAME);
+    if (!this.transactionProcess) throw new Error('Transaction Process Node Not found');
+
+    this.charginStationGroup = (await this.typologyCategory.getChildrenInContext(this.typologyContext)).find((node) => node.getName().get() === process.env.CS_GROUP_NAME);
+    this.energyCounterGroup = (await this.typologyCategory.getChildrenInContext(this.typologyContext)).find((node) => node.getName().get() === process.env.ENERGY_COUNTER_GROUP_NAME);
+    if (!this.charginStationGroup) throw new Error('Charging Station Group Node Not found');
+    if (!this.energyCounterGroup) throw new Error('Energy Counter Group Node Not found');
+
+    SpinalGraphService._addNode(this.nwVirtual);
+    SpinalGraphService._addNode(this.typologyCategory);
+    SpinalGraphService._addNode(this.zoneCategory);
+    SpinalGraphService._addNode(this.transactionProcess);
+    SpinalGraphService._addNode(this.charginStationGroup);
+    SpinalGraphService._addNode(this.energyCounterGroup);
+
+  }
+  
+  async createZonesIfNotExist(zoneData: IZone[]) {
+    const existingZones = await this.zoneCategory.getChildrenInContext(this.zoneContext);
+    let skippedCreations = 0;
+    let createdZones = 0;
+    for ( const zone of zoneData) {
+      let zoneNode = existingZones.find((node) => node.getName().get() === zone.name)
+      if(zoneNode) {
+        skippedCreations++;
+        SpinalGraphService._addNode(zoneNode);
+        continue;
+      }
+
+      const group = await groupManagerService.addGroup(
+        this.zoneContext.getId().get(),
+        this.zoneCategory.getId().get(),
+        zone.name,
+        "#ff0000",
+        "local_parking"
+      )
+      SpinalGraphService._addNode(group);
+      createdZones++;
+    }
+    console.log(`Zones creation: ${createdZones} created, ${skippedCreations} skipped (Already existed).`);
   }
 
-  async createDevice(device : IDevice) {
+  async updateZoneAttributes( zoneData: IZone[]) {
+    const existingZones = await this.zoneCategory.getChildrenInContext(this.zoneContext);
+    for ( const zone of zoneData) {
+      let zoneNode = existingZones.find((node) => node.getName().get() === zone.name)
+      if(!zoneNode) {
+        console.log(`Zone ${zone.name} not found, skipping attribute update. ( This should not happen if zones are created first )`);
+        continue;
+      }
+      SpinalGraphService._addNode(zoneNode);
+      await attributeService.createOrUpdateAttrsAndCategories(
+        zoneNode,
+        'Charge Unix',
+        { "id": zone.id ? zone.id+'' : '' ,
+          "dynamicLimitL1": zone.dynamicLimitL1 ? zone.dynamicLimitL1+'' : '' ,
+          "dynamicLimitL2": zone.dynamicLimitL2 ? zone.dynamicLimitL2+'' : '' ,
+          "dynamicLimitL3": zone.dynamicLimitL3 ? zone.dynamicLimitL3+'' : '' ,
+          "staticLimitL1": zone.staticLimitL1 ? zone.staticLimitL1+'' : '' ,
+          "staticLimitL2": zone.staticLimitL2 ? zone.staticLimitL2+'' : '' ,
+          "staticLimitL3": zone.staticLimitL3 ? zone.staticLimitL3+'' : '' ,
+          "energyPrice": zone.energyPrice ? zone.energyPrice+'' : ''
+        },
+      );
+    }
+    console.log(`Zones attributes updated !`);
+  }
+
+  async updateChargingStationAttributes(chargingStationData : IChargingStation[]){
+    const existingChargingStations = await this.charginStationGroup.getChildrenInContext(this.typologyContext);
+    for (const cs of chargingStationData) {
+      let csNode = existingChargingStations.find((node) => node.getName().get().includes(cs.name))
+      if(!csNode) {
+        console.log(`Charging Station ${cs.name} not found, skipping attribute update. ( This should not happen if charging stations are created first )`);
+        continue;
+      }
+      SpinalGraphService._addNode(csNode);
+      await attributeService.createOrUpdateAttrsAndCategories(
+        csNode,
+        'Charge Unix',
+        { "identity": cs.identity ? cs.identity+'' : '' ,
+          "vip": cs.vip ? cs.vip+'' : 'false' ,
+          "zoneId": cs.zoneId ? cs.zoneId+'' : '' ,
+          "operatorDisconnectedPolicy": cs.operatorDisconnectedPolicy ? cs.operatorDisconnectedPolicy+'' : '' ,
+          "operatorHeartbeatMinimumInterval": cs.operatorHeartbeatMinimumInterval ? cs.operatorHeartbeatMinimumInterval+'' : '' ,
+          "operatorMetervaluesMinimumInterval": cs.operatorMetervaluesMinimumInterval ? cs.operatorMetervaluesMinimumInterval+'' : '' ,
+          "chargePointVendor": cs.chargePointVendor ? cs.chargePointVendor+'' : '' ,
+          "chargePointModel": cs.chargePointModel ? cs.chargePointModel+'' : '' ,
+          "chargeBoxSerialNumber": cs.chargeBoxSerialNumber ? cs.chargeBoxSerialNumber+'' : '' ,
+          "chargePointSerialNumber": cs.chargePointSerialNumber ? cs.chargePointSerialNumber+'' : '' ,
+          "firmwareVersion": cs.firmwareVersion ? cs.firmwareVersion+'' : '' ,
+          "supportedFeatures": cs.supportedFeatures ? cs.supportedFeatures+'' : '' ,
+        });
+      }
+      console.log(`Charging Stations attributes updated !`);
+  }
+  async updateEnergyCounterAttributes( energyCounterData : IEquipment[]){
+    const existingEnergyCounters = await this.energyCounterGroup.getChildrenInContext(this.typologyContext);
+    for (const ec of energyCounterData) {
+      let ecNode = existingEnergyCounters.find((node) => node.getName().get().includes(ec.name))
+      if(!ecNode) {
+        console.log(`Energy Counter ${ec.name} not found, skipping attribute update. ( This should not happen if energy counters are created first )`);
+        continue;
+      }
+      SpinalGraphService._addNode(ecNode);
+      await attributeService.createOrUpdateAttrsAndCategories(
+        ecNode,
+        'Charge Unix',
+        { "id": ec.id ? ec.id+'' : '' ,
+          "productId": ec.productId ? ec.productId+'' : '' ,
+          "zoneIds": ec.zones ? ec.zones.map(z => z.id).join(',') : ''
+        });
+      }
+      console.log(`Energy Counters attributes updated !`);
+  }
+
+  async updateEnumerationAttributes(connectorData : ICSConnector[]){
+    await attributeService.addCategoryAttribute
+
+  }
+
+
+
+  async linkChargingStationsToZones(){
+    const zoneGroups = await this.zoneCategory.getChildrenInContext(this.zoneContext);
+    const chargingStations = await this.charginStationGroup.getChildrenInContext(this.typologyContext);
+    let mapZoneIdToNode : Map<number, SpinalNode<any>> = new Map();
+    for ( const zoneGroup of zoneGroups) {
+      const attr = await attributeService.findOneAttributeInCategory(zoneGroup, 'Charge Unix', 'id');
+      if(attr === -1) continue;
+      const zoneId = parseInt(attr.value.get());
+      mapZoneIdToNode.set(zoneId, zoneGroup);
+    }
+
+    for ( const csNode of chargingStations ) {
+      SpinalGraphService._addNode(csNode);
+      const zoneIdAttr = await attributeService.findOneAttributeInCategory(csNode, 'Charge Unix', 'zoneId');
+      if(zoneIdAttr === -1) continue;
+      const zoneId = parseInt(zoneIdAttr.value.get());
+      if(!mapZoneIdToNode.has(zoneId)) {
+        //console.log(`Zone with id ${zoneId} not found for charging station ${csNode.getName().get()}, skipping linking.`);
+        continue;
+      }
+      await groupManagerService.linkElementToGroup(this.zoneContext.getId().get(),mapZoneIdToNode.get(zoneId).getId().get(), csNode.getId().get());
+    }
+    console.log(`Charging Stations linked to Zones !`);
+  }
+
+
+
+  async createEndpoint(
+    deviceNode: SpinalNode<any>,
+    endpointName: string,
+    initialValue: number | string | boolean,
+    unit = ''
+  ) : Promise<SpinalNode<any>> {
+    
+    const endpointNodeModel = new InputDataEndpoint(
+      endpointName,
+      initialValue ?? 0,
+      unit,
+      InputDataEndpointDataType.Real,
+      InputDataEndpointType.Other
+    );
+
+    const endpointInfo = await this.nwService.createNewBmsEndpoint(deviceNode.getId().get(), endpointNodeModel);
+
+    const realNode =  SpinalGraphService.getRealNode(endpointInfo.id.get());
+    // SpinalGraphService._addNode(realNode);
+
+
+    await this.timeseriesService.pushFromEndpoint(
+          endpointInfo.id.get(),
+          initialValue as number
+    );
+    await attributeService.updateAttribute(
+        realNode,
+        'default',
+        'timeSeries maxDay',
+        { value: '14' }
+      );
+      return realNode;
+  }
+
+  // Gave up on this because counters can be linked to multiple zones
+  // async linkEnergyCountersToZones(){
+
+  // }
+
+
+
+  /*async createDevice(device : IDevice) {
     const deviceNodeModel = new InputDataDevice(device.id);
     const res = await this.nwService.createNewBmsDevice(this.nwVirtual.getId().get(), deviceNodeModel);
     const createdNode = SpinalGraphService.getRealNode(res.id.get());
@@ -188,40 +417,7 @@ export class SyncRunPullApi {
   }
 
 
-  async createEndpoint(
-    deviceNode: SpinalNode<any>,
-    endpointName: string,
-    initialValue: number | string | boolean
-  ) : Promise<SpinalNode<any>> {
-    
-    const endpointNodeModel = new InputDataEndpoint(
-      endpointName,
-      initialValue ?? 0,  
-      '',
-      InputDataEndpointDataType.Real,
-      InputDataEndpointType.Other
-    );
-
-    const endpointInfo = await this.nwService.createNewBmsEndpoint(deviceNode.getId().get(), endpointNodeModel);
-
-    const realNode =  SpinalGraphService.getRealNode(endpointInfo.id.get());
-    // SpinalGraphService._addNode(realNode);
-
-
-    await this.timeseriesService.pushFromEndpoint(
-          endpointInfo.id.get(),
-          initialValue as number
-    );
-    await attributeService.updateAttribute(
-        realNode,
-        'default',
-        'timeSeries maxDay',
-        { value: '14' }
-      );
-
-      return realNode;
-
-  }
+  
 
   async createEndpoints(buildingMeasures: IMeasurementValue[]){
     const deviceNodes = await this.nwVirtual.getChildren('hasBmsDevice');
@@ -277,33 +473,203 @@ export class SyncRunPullApi {
       await attributeService.addAttributeByCategoryName(deviceNode, 'Api_Attributes', 'spaceName', space.name);
     }
 
+  }*/
+
+  async createChargingStationDevicesAndEndpoints(chargingStationData : IChargingStation[], connectorData : ICSConnector[]){
+    const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
+    for ( const cs of chargingStationData) {
+      const csIdentity = cs.identity;
+      let deviceNode = existingDevices.find((node) => node.getName().get() === csIdentity);
+      if(!deviceNode) {
+        console.log(`Device for Charging Station ${cs.name} not found, creating...`);
+        const deviceNodeModel = new InputDataDevice(csIdentity);
+        deviceNode = await this.createDevice(csIdentity, 'ChargingStation');
+        // create endpoints
+        this.createEndpoint(deviceNode, 'connected', cs.connected);
+        this.createEndpoint(deviceNode, 'lastHeartbeat', new Date(cs.lastHeartbeat).getTime());
+        const csConnectors = connectorData.filter(conn => conn.chargingStationIdentity === cs.identity);
+        for ( const csConnector of csConnectors) {
+          const endpointStatusName = `Connector_${csConnector.id}_Status`;
+          const code = this.statusEnumerationMap.get(csConnector.status) ?? this.statusEnumerationMap.get('Unknown');
+          this.createEndpoint(deviceNode, endpointStatusName, code);
+        }
+      }
+    }
   }
+
+  async createEnergyCounterDevicesAndEndpoints(energyCounterData : IEquipment[]){
+    const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
+    for ( const ec of energyCounterData) {
+      let deviceNode = existingDevices.find((node) => node.getName().get() === ec.name);
+      if(!deviceNode) {
+        console.log(`Device for Energy Counter ${ec.name} not found, creating...`);
+        deviceNode = await this.createDevice(ec.name, 'EnergyCounter');
+        // create endpoints
+        this.createEndpoint(deviceNode, 'connected', ec.connected);
+        // create endpoints for l1 , l2 , l3 currents and energy consumptions
+        this.createEndpoint(deviceNode, 'Current_L1', ec.values.currents.l1.value,ec.values.currents.l1.unit);
+        this.createEndpoint(deviceNode, 'Current_L2', ec.values.currents.l2.value,ec.values.currents.l2.unit);
+        this.createEndpoint(deviceNode, 'Current_L3', ec.values.currents.l3.value,ec.values.currents.l3.unit);
+        this.createEndpoint(deviceNode, 'Energy_Consumption', ec.values.energy.value, ec.values.energy.unit);        
+      }
+    }
+  }
+
+  async linkDevicesToChargingStationsAndEnergyCounters(){
+    const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
+    const chargingStations = await this.charginStationGroup.getChildrenInContext(this.typologyContext);
+    const energyCounters = await this.energyCounterGroup.getChildrenInContext(this.typologyContext);
+
+    const mapCsIdentityToNode : Map<string, SpinalNode<any>> = new Map();
+
+    for ( const csNode of chargingStations) {
+      const csIdentityAttr = await attributeService.findOneAttributeInCategory(csNode, 'Charge Unix', 'identity');
+      if(csIdentityAttr === -1) continue;
+      const csIdentity = csIdentityAttr.value.get();
+      mapCsIdentityToNode.set(csIdentity, csNode);
+    }
+
+    for ( const deviceNode of existingDevices) {
+      const deviceName = deviceNode.getName().get();
+      if(mapCsIdentityToNode.has(deviceName)) {
+        const parentNode = mapCsIdentityToNode.get(deviceName); // Parent is the charging station BimObject
+        const existingChildren = await parentNode.getChildren('hasBmsDevice');
+        const alreadyLinked = existingChildren.find((child) => child.getId().get() === deviceNode.getId().get());
+        if(!alreadyLinked) {
+          parentNode.addChild(deviceNode, 'hasBmsDevice', SPINAL_RELATION_PTR_LST_TYPE);
+        }
+      }
+      else {
+        const parentNode = energyCounters.find((ecNode) => ecNode.getName().get().includes(deviceName)); // Parent is the energy counter BimObject
+        if (!parentNode) continue; 
+        const existingChildren = await parentNode.getChildren('hasBmsDevice');
+        const alreadyLinked = existingChildren.find((child) => child.getId().get() === deviceNode.getId().get());
+        if (alreadyLinked) continue;
+        parentNode.addChild(deviceNode, 'hasBmsDevice', SPINAL_RELATION_PTR_LST_TYPE);
+      }
+    }
+
+
+    //const chargingStationDevices = existingDevices.filter(device => device.getType().get().i));
+    
+    
+
+
+  }
+
+  async createDevice(deviceName : string,type: string) {
+    const deviceNodeModel = new InputDataDevice(deviceName, type);
+    const res = await this.nwService.createNewBmsDevice(this.nwVirtual.getId().get(), deviceNodeModel);
+    const createdNode = SpinalGraphService.getRealNode(res.id.get());
+    console.log('Created device ', createdNode.getName().get());
+    return createdNode;
+  }
+
+  async updateChargingStationDevices(chargingStationData : IChargingStation[], connectorData : ICSConnector[]){
+    const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
+    for (const cs of existingDevices) {
+      const matchingCs = chargingStationData.find((apiCs) => {
+        return apiCs.identity === cs.getName().get();
+      });
+      if(!matchingCs) {
+        continue;
+      }
+      const endpoints = await cs.getChildren('hasBmsEndpoint');
+      const connectedEndpoint = endpoints.find((ep) => ep.getName().get() === 'connected');
+      if(connectedEndpoint) {
+        await this.updateEndpoint(connectedEndpoint, matchingCs.connected);
+      }
+      const lastHeartbeatEndpoint = endpoints.find((ep) => ep.getName().get() === 'lastHeartbeat');
+      if(lastHeartbeatEndpoint) {
+        await this.updateEndpoint(lastHeartbeatEndpoint, new Date(matchingCs.lastHeartbeat).getTime());
+      }
+      // We get the connectors for this charging station
+      const csConnectors = connectorData.filter( conn => conn.chargingStationIdentity === matchingCs.identity);
+      for ( const csConnector of csConnectors) {
+        const endpointStatusName = `Connector_${csConnector.id}_Status`;
+        const statusEndpoint = endpoints.find((ep) => ep.getName().get() === endpointStatusName);
+        if(statusEndpoint) {
+          const code = this.statusEnumerationMap.get(csConnector.status) ?? this.statusEnumerationMap.get('Unknown');
+          await this.updateEndpoint(statusEndpoint, code);
+        }
+      }
+    }
+  }
+
+  async updateEnergyCounterDevices(energyCounterData : IEquipment[]){
+    const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
+    for (const ec of existingDevices) {
+      const matchingEc = energyCounterData.find((apiEc) => {
+        return apiEc.name === ec.getName().get();
+      });
+      if(!matchingEc) {
+        continue;
+      }
+
+      const endpoints = await ec.getChildren('hasBmsEndpoint');
+      const connectedEndpoint = endpoints.find((ep) => ep.getName().get() === 'connected');
+      if(connectedEndpoint) {
+        await this.updateEndpoint(connectedEndpoint, matchingEc.connected);
+      }
+      // update endpoints for l1 , l2 , l3 currents and energy consumptions
+      const currentL1Endpoint = endpoints.find((ep) => ep.getName().get() === 'Current_L1');
+      if(currentL1Endpoint) {
+        await this.updateEndpoint(currentL1Endpoint, matchingEc.values.currents.l1.value);
+      }
+      const currentL2Endpoint = endpoints.find((ep) => ep.getName().get() === 'Current_L2');
+      if(currentL2Endpoint) {
+        await this.updateEndpoint(currentL2Endpoint, matchingEc.values.currents.l2.value);
+      }
+      const currentL3Endpoint = endpoints.find((ep) => ep.getName().get() === 'Current_L3');
+      if(currentL3Endpoint) {
+        await this.updateEndpoint(currentL3Endpoint, matchingEc.values.currents.l3.value);
+      }
+      const energyConsumptionEndpoint = endpoints.find((ep) => ep.getName().get() === 'Energy_Consumption');
+      if(energyConsumptionEndpoint) {
+        await this.updateEndpoint(energyConsumptionEndpoint, matchingEc.values.energy.value);
+      }
+      
+    }
+  }
+
+
+  async updateEndpoint(endpointNode: SpinalNode<any>, newValue: number | string | boolean){
+    SpinalGraphService._addNode(endpointNode);
+    await this.nwService.setEndpointValue(endpointNode.getId().get(), newValue);
+    console.log(`Updated endpoint ${endpointNode.getName().get()} with value ${newValue}`);
+  }
+
 
   async init(): Promise<void> {
     console.log('Initiating SyncRunPull');
     try {
 
       await this.nwService.init(this.graph, {contextName : process.env.NETWORK_NAME, contextType :"Network", networkName:process.env.VIRTUAL_NETWORK_NAME, networkType:"NetworkVirtual"});
-      this.nwContext = await this.getNetworkContext();
-      this.nwVirtual = await this.getVirtualNetwork();
-      console.log('Network Service initialized');
+      await this.initRequiredNodes();
 
-      const buildings = await this.apiClient.getBuildings();
-      this.clientBuilding = buildings.find(b => b.name === 'ASTRID');
-      if (!this.clientBuilding) throw new Error('Building ASTRID not found in API response. Perhaps database has changed?');
-      console.log('Fetching building data...')
+      const zoneData = await this.apiClient.getZoneData();
+      console.log(`Fetched ${zoneData.length} zones from API`);
+      const chargingStationData = await this.apiClient.getChargingStationData();
+      console.log(`Fetched ${chargingStationData.length} charging stations from API`);
+      const energyCounterData = await this.apiClient.getEquipmentData();
+      console.log(`Fetched ${energyCounterData.length} energy counters from API`);
+      await this.createZonesIfNotExist(zoneData);
+      await this.updateZoneAttributes(zoneData);
 
-      // await this.addSpaceNameAttributeInDevices();
-      let [buildingDevices, buildingMeasures] = await Promise.all([
-        this.apiClient.getBuildingDevices(this.clientBuilding.id,this.clientBuilding.deviceCount), // Will only get Occupancy_Sensor_Equipment devices
-        this.apiClient.getBuildingMeasurementValues(this.clientBuilding.id,this.clientBuilding.measurementCount) // Will get all measurement values ( including temperature stuff, but will get filtered out)
-      ])
-      buildingMeasures = buildingMeasures.filter(m => ['Occupancy_Status','Occupancy_Count_Sensor'].includes(m.ontologyType));
-      console.log(`Done ! Found ${buildingDevices.length} devices and ${buildingMeasures.length} measures.`);
-      await this.createDevices(buildingDevices);
-      await this.createEndpoints(buildingMeasures);
+      await this.updateChargingStationAttributes(chargingStationData);
+      await this.updateEnergyCounterAttributes(energyCounterData);
+      await this.linkChargingStationsToZones();
 
+      const connectorData = await this.apiClient.getConnectorData();
+      console.log(`Fetched ${connectorData.length} connectors from API`);
 
+      await this.createChargingStationDevicesAndEndpoints(chargingStationData, connectorData)
+      await this.createEnergyCounterDevicesAndEndpoints(energyCounterData);
+      // 5 Link those devices to charging stations and energy counters nodes in typology
+      
+      await this.linkDevicesToChargingStationsAndEnergyCounters();
+
+      console.log('Required nodes initialized');
 
       this.config.lastSync.set(Date.now());
       console.log('Init DONE !');
@@ -323,9 +689,17 @@ export class SyncRunPullApi {
       const before = Date.now();
       try {
         console.log('Run...');
-        const buildingMeasures = await this.apiClient.getBuildingMeasurementValues(this.clientBuilding.id,this.clientBuilding.measurementCount);
-        const filteredMeasures = buildingMeasures.filter(m => ['Occupancy_Status','Occupancy_Count_Sensor'].includes(m.ontologyType));
-        await this.updateEndpointValues(filteredMeasures);
+        const chargingStationData = await this.apiClient.getChargingStationData();
+        console.log(`Fetched ${chargingStationData.length} charging stations from API`);
+        const connectorData = await this.apiClient.getConnectorData();
+        console.log(`Fetched ${connectorData.length} connectors from API`);
+        await this.updateChargingStationDevices(chargingStationData, connectorData);
+        console.log('Charging Stations updated !');
+        const energyCounterData = await this.apiClient.getEquipmentData();
+        console.log(`Fetched ${energyCounterData.length} energy counters from API`);
+        await this.updateEnergyCounterDevices(energyCounterData);
+        console.log('Energy Counters updated !');
+
         console.log('... Run finished !');
         this.config.lastSync.set(Date.now());
       } catch (e) {
