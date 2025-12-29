@@ -114,8 +114,6 @@ export class SyncRunPullApi {
     ['Faulted'      , 8],
     ['Reserved'     , 9],
     ['Offline'      , 10],
-
-
   ]);
 
 
@@ -282,13 +280,6 @@ export class SyncRunPullApi {
       }
       console.log(`Energy Counters attributes updated !`);
   }
-
-  async updateEnumerationAttributes(connectorData : ICSConnector[]){
-    await attributeService.addCategoryAttribute
-
-  }
-
-
 
   async linkChargingStationsToZones(){
     const zoneGroups = await this.zoneCategory.getChildrenInContext(this.zoneContext);
@@ -653,9 +644,9 @@ export class SyncRunPullApi {
       console.log(`Fetched ${chargingStationData.length} charging stations from API`);
       const energyCounterData = await this.apiClient.getEquipmentData();
       console.log(`Fetched ${energyCounterData.length} energy counters from API`);
+
       await this.createZonesIfNotExist(zoneData);
       await this.updateZoneAttributes(zoneData);
-
       await this.updateChargingStationAttributes(chargingStationData);
       await this.updateEnergyCounterAttributes(energyCounterData);
       await this.linkChargingStationsToZones();
