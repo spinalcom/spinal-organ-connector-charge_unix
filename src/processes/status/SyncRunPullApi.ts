@@ -115,19 +115,11 @@ export class SyncRunPullApi {
     ['Charging', 3],
     ['SuspendedEV', 4],
     ['SuspendedEVSE', 5],
-<<<<<<< HEAD
-    ['Finishing'    , 6],
-    ['Unavailable'  , 7],
-    ['Faulted'      , 8],
-    ['Reserved'     , 9],
-    ['Offline'      , 10],
-=======
     ['Finishing', 6],
     ['Unavailable', 7],
     ['Faulted', 8],
     ['Reserved', 9],
     ['Offline', 10],
->>>>>>> 852bc02 ( added transactions and refacto old functions)
   ]);
 
 
@@ -327,11 +319,7 @@ export class SyncRunPullApi {
     console.log(`Energy Counters attributes updated !`);
   }
 
-<<<<<<< HEAD
-  async linkChargingStationsToZones(){
-=======
   async linkChargingStationsToZones() {
->>>>>>> 852bc02 ( added transactions and refacto old functions)
     const zoneGroups = await this.zoneCategory.getChildrenInContext(this.zoneContext);
     const chargingStations = await this.chargingStationGroup.getChildrenInContext(this.typologyContext);
     let mapZoneIdToNode: Map<number, SpinalNode<any>> = new Map();
