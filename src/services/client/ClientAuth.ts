@@ -6,6 +6,7 @@ import { IChargingStation } from '../../interfaces/api/IChargingStation';
 import { IEquipment } from '../../interfaces/api/IEquipment';
 import { IEquipmentValuesResponse } from '../../interfaces/api/IEquipment';
 import { ICSConnector } from '../../interfaces/api/ICSConnector';
+import { ITransaction, ITransactionResponse } from '../../interfaces/api/ITransaction';
 
 export class ClientApi {
   private static instance: ClientApi;
@@ -47,9 +48,9 @@ export class ClientApi {
   }
 
   async getEquipmentData() {
-    return (await this.apiAxios.post<IEquipment[]>('/equipment/data', { with : ['zones','values']})).data;
+    return (await this.apiAxios.post<IEquipment[]>('/equipment/data', { with: ['zones', 'values'] })).data;
   }
- 
+
   async getEquipmentValues(equipmentId: number) {
     return (await this.apiAxios.get<IEquipmentValuesResponse>(`/equipment/${equipmentId}/values`)).data;
   }
@@ -58,6 +59,9 @@ export class ClientApi {
     return (await this.apiAxios.get<ICSConnector[]>('/connector/data')).data;
   }
 
+  async getTransactionData() {
+    return (await this.apiAxios.get<ITransactionResponse>('/transaction/paginate?perPage=200')).data.data;
+  }
 
 
 }
