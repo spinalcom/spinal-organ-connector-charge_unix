@@ -197,10 +197,10 @@ export class SyncRunPullApi {
     const energyCounterNodes = await this.energyCounterGroup.getChildrenInContext(this.typologyContext);
     for (const ecNode of energyCounterNodes) {
       SpinalGraphService._addNode(ecNode);
-      const ecIdAttr = await attributeService.findOneAttributeInCategory(ecNode, process.env.LINK_CATEGORY_ATTRIBUTE, process.env.LINK_ATTRIBUTE_LABEL);
-      if (ecIdAttr === -1) continue;
-      const ecId = ecIdAttr.value.get();
-      this.energyCounterToNodeRecord[ecId] = ecNode;
+      const ecNameAttr = await attributeService.findOneAttributeInCategory(ecNode, process.env.LINK_CATEGORY_ATTRIBUTE, process.env.LINK_ATTRIBUTE_LABEL);
+      if (ecNameAttr === -1) continue;
+      const ecName = ecNameAttr.value.get();
+      this.energyCounterToNodeRecord[ecName] = ecNode;
     }
 
 
@@ -300,7 +300,7 @@ export class SyncRunPullApi {
   }
   async updateEnergyCounterAttributes(energyCounterData: IEquipment[]) {
     for (const ec of energyCounterData) {
-      const ecNode = this.energyCounterToNodeRecord[ec.id];
+      const ecNode = this.energyCounterToNodeRecord[ec.name];
       if (!ecNode) {
         console.log(`Energy Counter ${ec.name} not found, skipping attribute update. ( This should not happen if energy counters are mapped first )`);
         continue;
@@ -379,130 +379,6 @@ export class SyncRunPullApi {
     );
     return realNode;
   }
-
-  // Gave up on this because counters can be linked to multiple zones
-  // async linkEnergyCountersToZones(){
-
-  // }
-
-
-
-  /*async createDevice(device : IDevice) {
-    const deviceNodeModel = new InputDataDevice(device.id);
-    const res = await this.nwService.createNewBmsDevice(this.nwVirtual.getId().get(), deviceNodeModel);
-    const createdNode = SpinalGraphService.getRealNode(res.id.get());
-    await this.addDeviceAttributes(createdNode, device);
-
-    console.log('Created device ', createdNode.getName().get());
-  }
-
-  async addDeviceAttributes(node: SpinalNode<any>, deviceModel: IDevice) {
-     await attributeService.addAttributeByCategoryName(
-      node,
-      'Api_Attributes',
-      'name',
-      `${deviceModel.name}`
-    );
-    await attributeService.addAttributeByCategoryName(
-      node,
-      'Api_Attributes',
-      'buildingId',
-      `${deviceModel.buildingId}`
-    );
-    await attributeService.addAttributeByCategoryName(
-      node,
-      'Api_Attributes',
-      'floorId',
-      `${deviceModel.floorId}`
-    );
-    await attributeService.addAttributeByCategoryName(
-      node,
-      'Api_Attributes',
-      'spaceId',
-      `${deviceModel.spaceId}`
-    );
-    await attributeService.addAttributeByCategoryName(
-      node,
-      'Api_Attributes',
-      'ontologyType',
-      `${deviceModel.ontologyType}`
-    );
-
-  }
-
-  async createDevices(buildingDevices){
-    const deviceNodes = await this.nwVirtual.getChildren('hasBmsDevice');
-    // await this.createDevice(buildingDevices[0]);
-    for (const device of buildingDevices){
-      let deviceNode = deviceNodes.find((node) => node.getName().get() === device.id);
-      if(deviceNode){
-        console.log(`Device ${device.name} already exists, skipping creation.`);
-        SpinalGraphService._addNode(deviceNode);
-        continue;
-      }
-      await this.createDevice(device);
-      
-    }
-  }
-
-
-  
-
-  async createEndpoints(buildingMeasures: IMeasurementValue[]){
-    const deviceNodes = await this.nwVirtual.getChildren('hasBmsDevice');
-    console.log(`Creating endpoints for ${deviceNodes.length} devices...`);
-
-    for (const measure of buildingMeasures) {
-      const deviceNode = deviceNodes.find(node => node.getName().get() === measure.deviceId);
-      if (!deviceNode) {
-        // console.log(`Device ${measure.deviceId} not found, skipping measure. ( This should not happen if devices are created first )`);
-        continue;
-      }
-      SpinalGraphService._addNode(deviceNode);
-
-      const endpoints = await deviceNode.getChildren('hasBmsEndpoint');
-      let existingEndpoint = endpoints.find((ep) => ep.getName().get() === measure.name);
-      if (existingEndpoint) {
-        SpinalGraphService._addNode(existingEndpoint);
-        this.endpointMap.set(measure.id, existingEndpoint);
-        continue;
-      }
-      existingEndpoint = await this.createEndpoint(deviceNode, measure.name, measure.value);
-      this.endpointMap.set(measure.id, existingEndpoint)
-
-    }
-  }
-
-  async updateEndpointValues(buildingMeasures: IMeasurementValue[]){
-    console.log(`Updating values for ${buildingMeasures.length} measures...`);
-    for (const measure of buildingMeasures) {
-      const endpointNode = this.endpointMap.get(measure.id);
-      if (!endpointNode) {
-        console.log(`Endpoint for measure ${measure.id} not found, skipping update.`);
-        continue;
-      }
-      this.nwService.setEndpointValue(endpointNode.getId().get(), measure.value);
-    }
-
-  }
-
-  async addSpaceNameAttributeInDevices(){
-    const spaces = await this.apiClient.getBuildingSpaces(this.clientBuilding.id, this.clientBuilding.spaceCount);
-    const deviceNodes = await this.nwVirtual.getChildren('hasBmsDevice');
-    for( const deviceNode of deviceNodes) {
-      SpinalGraphService._addNode(deviceNode);
-
-      const spaceIdAttribute = await attributeService.findOneAttributeInCategory(deviceNode, 'Api_Attributes', 'spaceId');
-      if( spaceIdAttribute === -1 )  continue;
-      const spaceId = spaceIdAttribute.value.get();
-
-      const space = spaces.find(s => s.id === spaceId);
-      if(!space) continue;
-      console.log(`Adding space name attribute for device ${deviceNode.getName().get()} with space ${space.name}`);
-      await attributeService.addAttributeByCategoryName(deviceNode, 'Api_Attributes', 'spaceName', space.name);
-    }
-
-  }*/
 
   async createChargingStationDevicesAndEndpoints(chargingStationData: IChargingStation[], connectorData: ICSConnector[]) {
     const existingDevices = await this.nwVirtual.getChildrenInContext(this.nwContext);
@@ -697,7 +573,8 @@ export class SyncRunPullApi {
           amount: tx.amount,
           startedAt: tx.createdAt,
           terminatedAt: tx.terminatedAt || '',
-          reason: tx.reason || ''
+          reason: tx.reason || '',
+          priority: tx.reason ? 0 : 2
         }
         const ticketNode = await addTicket(ticketInfo, this.transactionProcess, this.transactionContext, chargingStationIdentityToNodeRecord[tx.chargingStationIdentity]);
         if (tx.terminatedAt) {
@@ -713,7 +590,8 @@ export class SyncRunPullApi {
             "meterValue": `${tx.meterValue}`,
             "amount": `${tx.amount}`,
             "terminatedAt": tx.terminatedAt || '',
-            "reason": tx.reason || ''
+            "reason": tx.reason || '',
+            "priority": tx.reason ? "0" : "2" // Tmp fix because ticket app seems to not care about the config priority setup
           }
         )
       }
